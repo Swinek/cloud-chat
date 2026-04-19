@@ -1,0 +1,12 @@
+{
+  "name": "cloud-chat",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "express": "^4.19.0",
+    "redis": "^4.6.10",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.8.3"
+  }
+}

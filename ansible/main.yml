@@ -1,0 +1,115 @@
+---
+- name: Comprehensive server setup and application deployment
+  hosts: chat_server
+  become: yes
+
+  tasks:
+    - name: Create Swap space (2GB) - protection against RAM shortage
+      shell: |
+        if [ ! -f /swapfile ]; then
+          fallocate -l 2G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Install K3s (Kubernetes)
+      shell: curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for K3s cluster to be fully operational
+      shell: k3s kubectl get nodes
+      register: nodes_status
+      retries: 6
+      delay: 10
+      until: nodes_status.rc == 0
+      changed_when: false
+
+    - name: Open system firewall (iptables)
+      shell: |
+        iptables -F
+        iptables -P INPUT ACCEPT
+        iptables -P FORWARD ACCEPT
+        iptables -P OUTPUT ACCEPT
+      changed_when: false
+
+    - name: Create application manifest
+      copy:
+        dest: /root/chat-manifest.yml
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: redis
+          spec:
+            selector:
+              matchLabels:
+                app: redis
+            template:
+              metadata:
+                labels:
+                  app: redis
+              spec:
+                containers:
+                - name: redis
+                  image: redis:alpine
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: redis
+          spec:
+            ports:
+            - port: 6379
+            selector:
+              app: redis
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: chat-app
+          spec:
+            replicas: 1 # Reduced to 1 for stability on 1GB RAM
+            selector:
+              matchLabels:
+                app: chat-app
+            template:
+              metadata:
+                labels:
+                  app: chat-app
+              spec:
+                containers:
+                - name: chat-app
+                  image: swinek/cloud-chat:v1
+                  env:
+                  - name: REDIS_URL
+                    value: "redis://redis:6379"
+                  ports:
+                  - containerPort: 3000
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: chat-service
+          spec:
+            type: LoadBalancer
+            ports:
+            - port: 80
+              targetPort: 3000
+            selector:
+              app: chat-app
+
+    - name: Apply manifest to the cluster
+      shell: k3s kubectl apply -f /root/chat-manifest.yml
+
+    - name: Check if pods are running
+      shell: k3s kubectl get pods
+      register: result
+
+    - name: Final status
+      debug:
+        msg: "{{ result.stdout_lines }}"
