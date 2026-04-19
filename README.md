@@ -1,31 +1,30 @@
-    # DevOps Cloud Chat - Scalable Real-Time Messaging
+    # DevOps Cloud Chat — Scalable Real-Time Messaging
 
+    This project is not just a messaging application but primarily a fully automated, scalable cloud environment built on Infrastructure as Code (IaC) and DevOps principles.
 
-    This project is not just a messaging application, but primarily a fully automated, scalable cloud environment built upon **Infrastructure as Code (IaC)** and **DevOps** principles.
-
-    The main goal of the project was to deploy a microservice architecture in a highly constrained cloud environment (a 1 GB RAM instance) while adhering to Enterprise standards: automated infrastructure provisioning, system configuration, and container orchestration.
+    The main goal was to deploy a microservice architecture in a highly constrained cloud environment (1 GB RAM instance) while adhering to enterprise standards: automated infrastructure provisioning, system configuration, and container orchestration.
 
     ## System Architecture
 
     The project is divided into two main layers: Application and Infrastructure.
 
     ### 1. Application Layer (Node.js + Redis)
-    * **Backend:** Node.js server with the Express framework serving a static HTML file.
-    * **WebSockets:** `socket.io` library for real-time communication.
-    * **Horizontal Scalability:** Uses `@socket.io/redis-adapter`. This allows multiple Node.js server replicas (Kubernetes pods) to run concurrently, syncing states and messages via a Redis broker.
-    * **Containerization:** The application runs on port 3000 inside a container based on the highly optimized `node:22-alpine` image. Layer caching optimization in the `Dockerfile` (installing dependencies before copying code) significantly speeds up the build process.
+    - **Backend:** Node.js server with Express serving a static HTML file.
+    - **WebSockets:** `socket.io` for real-time communication.
+    - **Horizontal Scalability:** Uses `@socket.io/redis-adapter` so multiple Node.js replicas (Kubernetes pods) sync state/messages via Redis.
+    - **Containerization:** App runs on port 3000 inside a container based on `node:22-alpine`. The Dockerfile optimizes layer caching (install dependencies before copying code) to speed builds.
 
-    ### 2. Infrastructure and DevOps Layer (Terraform + Ansible + K3s)
-    * **Provisioning (Terraform):** The code automatically provisions a Virtual Cloud Network (VCN), subnets, internet gateways, and an Ubuntu Virtual Machine in Oracle Cloud.
-    * **Configuration (Ansible):** The `main.yml` playbook performs a full setup of the bare server:
-    * Dynamically creates an emergency 2GB Swap file, protecting the system from Out-Of-Memory errors on low-RAM instances.
-    * Opens and secures firewall rules (iptables).
-    * Automatically installs and configures a Kubernetes cluster using the **K3s** distribution.
-    * **Orchestration (Kubernetes):** Manifests deploy the application (Deployment) along with a LoadBalancer service, exposing traffic from port 3000 inside the containers directly to port 80 externally.
+    ### 2. Infrastructure & DevOps Layer (Terraform + Ansible + K3s)
+    - **Provisioning (Terraform):** Automatically provisions a Virtual Cloud Network (VCN), subnets, internet gateway, and an Ubuntu VM in Oracle Cloud.
+    - **Configuration (Ansible):** The `main.yml` playbook performs full server setup:
+        - Dynamically creates a 2 GB swap file to protect low-RAM instances from OOM.
+        - Opens and secures firewall rules (iptables).
+        - Installs and configures a Kubernetes cluster using K3s.
+    - **Orchestration (Kubernetes):** Manifests deploy the application (Deployment) and a LoadBalancer service, exposing container port 3000 as external port 80.
 
     ## Local Development (Docker Compose)
 
-    A `docker-compose.yml` configuration is provided for development testing, simulating a cluster consisting of a Redis broker (`redis-broker`) and two application nodes (`chat-node-1` on port 3001 and `chat-node-2` on port 3002).
+    A `docker-compose.yml` is provided for development, simulating a cluster with a Redis broker (`redis-broker`) and two app nodes (`chat-node-1` on port 3001 and `chat-node-2` on port 3002).
 
     ```bash
     # Clone the repository
@@ -35,49 +34,53 @@
     docker-compose up -d --build
     ```
 
-The application will be accessible at `http://localhost:3001` and `http://localhost:3002`. A message sent on one port will immediately appear on the other thanks to the Redis adapter.
+    The application will be accessible at:
+    - http://localhost:3001
+    - http://localhost:3002
 
-##  Cloud Deployment (Automation)
+    Messages sent on one port appear on the other thanks to the Redis adapter.
 
-Deployment to the cloud environment is fully automated using Infrastructure as Code.
+    ## Cloud Deployment (Automation)
 
-1. **Infrastructure (Terraform):**
-   ```bash
-   cd terraform
-   terraform init
-   terraform apply
-   ```
-   *Upon approval, Terraform will output the public IP address of the new server.*
+    Deployment to the cloud is fully automated using IaC.
 
-2. **Kubernetes Configuration & Deployment (Ansible):**
-   *Update the IP address generated by Terraform in the `ansible/inventory.ini` file.*
-   ```bash
-   cd ../ansible
-   ansible-playbook -i inventory.ini site.yml
-   ```
-   *Ansible will prepare the server, install K3s, wait for its readiness, and apply the application manifests.*
+    1. Infrastructure (Terraform)
+    ```bash
+    cd terraform
+    terraform init
+    terraform apply
+    ```
+    Upon approval, Terraform outputs the public IP of the new server.
 
-## Load Testing (Chaos Engineering)
+    2. Kubernetes Configuration & Deployment (Ansible)
+    - Update the IP generated by Terraform in `ansible/inventory.ini`.
+    ```bash
+    cd ../ansible
+    ansible-playbook -i inventory.ini site.yml
+    ```
+    Ansible prepares the server, installs K3s, waits for readiness, and applies the application manifests.
 
-The `flood.js` script is located in the application directory. It was written to simulate heavy traffic and test the performance of the LoadBalancer and the Redis broker.
-The script continuously creates instances of 50 virtual users, each sending 10 messages per second in real time.
+    ## Load Testing (Chaos Engineering)
 
-```bash
-# Run the load test
-node flood.js
-```
+    The `flood.js` script (in the application directory) simulates heavy traffic to test the LoadBalancer and Redis broker. It continuously creates batches of virtual users sending messages in real time.
 
-## Future Enhancements (TODO)
+    ```bash
+    # Run the load test
+    node flood.js
+    ```
 
-To further improve the scalability, resilience, and observability of the infrastructure, the following enhancements are planned:
+    ## Future Enhancements (TODO)
 
-* **Cloud Provider Migration:** Move from the constrained 1 GB RAM instance to a more robust cloud provider environment (Azure for Students or GitHub Student Developer Pack credits). This will allow running multiple application replicas without resource starvation and facilitate the deployment of complex observability tools.
-* **Demonstrating Kubernetes:** Conduct extensive Chaos Engineering using the existing `flood.js` script. The goal is to overload the current pods and demonstrate Kubernetes' auto-healing capabilities (killing unresponsive pods and spinning up new ones) and horizontal pod autoscaling under simulated DDoS conditions.
-* **Comprehensive Observability:** Implement an enterprise-grade monitoring stack using **Prometheus** for metrics collection and **Grafana** for data visualization. This will include creating dashboards to monitor CPU/Memory usage, pod health, and application-specific metrics in real-time.
-* **Ingress Controller & Reverse Proxy (Nginx)**: Replace the standard LoadBalancer with an Nginx Ingress Controller. This will act as a robust reverse proxy, enabling advanced traffic routing, rate limiting, and improved security boundaries.
-* **Security & SSL (Cert-Manager)**: Automate the provisioning and renewal of TLS certificates using Let's Encrypt to secure WebSocket and HTTP traffic (HTTPS/WSS) behind the Nginx Ingress.
+    Planned improvements for scalability, resilience, and observability:
 
+    - **Cloud Provider Migration:** Move from the constrained 1 GB instance to a more robust environment (Azure for Students, GitHub Student Pack) to run more replicas and observability tools.
+    - **Kubernetes Demonstrations:** Use `flood.js` to demonstrate Kubernetes auto-healing and horizontal autoscaling under simulated overload.
+    - **Observability:** Add Prometheus for metrics and Grafana for dashboards (CPU/memory, pod health, app metrics).
+    - **Ingress & Reverse Proxy (Nginx):** Replace the LoadBalancer with an Nginx Ingress Controller for advanced routing, rate limiting, and security.
+    - **Security & TLS (cert-manager):** Automate TLS provisioning/renewal with Let's Encrypt to secure HTTP/WSS traffic.
 
----
-*Created as a learning project mainly focused on IaC(Terraform and Ansible), Kubernetes, Cloud and administration as my points of interest.*
-# cloud-chat
+    ---
+
+    *Created as a learning project focused on IaC (Terraform and Ansible), Kubernetes, cloud, and system administration.*
+
+    
