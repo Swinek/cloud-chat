@@ -149,7 +149,7 @@
                   averageUtilization: 50
             behavior:
               scaleDown:
-                stabilizationWindowSeconds:
+                stabilizationWindowSeconds: 60
                 policies:
                 - type: Percent
                   value: 100
