@@ -57,6 +57,13 @@
                 containers:
                 - name: redis
                   image: redis:alpine
+                  resources:
+                    requests:
+                      memory: "64Mi"
+                      cpu: "50m"
+                    limits:
+                      memory: "120Mi"
+                      cpu: "200m"
           ---
           apiVersion: v1
           kind: Service
@@ -73,7 +80,7 @@
           metadata:
             name: chat-app
           spec:
-            replicas: 1 # Reduced to 1 for stability on 1GB RAM
+            replicas: 1
             selector:
               matchLabels:
                 app: chat-app
@@ -84,12 +91,31 @@
               spec:
                 containers:
                 - name: chat-app
-                  image: swinek/cloud-chat:v1
+                  image: swinek/cloud-chat:v7
                   env:
                   - name: REDIS_URL
                     value: "redis://redis:6379"
                   ports:
                   - containerPort: 3000
+                  resources:
+                    requests:
+                      memory: "100Mi"
+                      cpu: "100m"
+                    limits:
+                      memory: "500Mi"
+                      cpu: "500m" 
+                  readinessProbe:
+                    tcpSocket:
+                      port: 3000
+                    initialDelaySeconds: 2
+                    periodSeconds: 2
+                    failureThreshold: 2
+                  livenessProbe:
+                    tcpSocket:
+                      port: 3000
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
+                    failureThreshold: 3
           ---
           apiVersion: v1
           kind: Service
@@ -102,6 +128,32 @@
               targetPort: 3000
             selector:
               app: chat-app
+          ---
+          apiVersion: autoscaling/v2
+          kind: HorizontalPodAutoscaler
+          metadata:
+            name: chat-app-memory-hpa
+          spec:
+            scaleTargetRef:
+              apiVersion: apps/v1
+              kind: Deployment
+              name: chat-app
+            minReplicas: 1
+            maxReplicas: 10
+            metrics:
+            - type: Resource
+              resource:
+                name: memory
+                target:
+                  type: Utilization
+                  averageUtilization: 50
+            behavior:
+              scaleDown:
+                stabilizationWindowSeconds:
+                policies:
+                - type: Percent
+                  value: 100
+                  periodSeconds: 15
 
     - name: Apply manifest to the cluster
       shell: k3s kubectl apply -f /root/chat-manifest.yml

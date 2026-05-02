@@ -1,120 +1,130 @@
 terraform {
   required_providers {
-    oci = {
-      source  = "oracle/oci"
-      version = "~> 5.0"
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
     }
   }
 }
 
-provider "oci" {
-  config_file_profile = "DEFAULT"
-  region              = "eu-stockholm-1" # Change if you selected a different region
+provider "azurerm" {
+  features {}
 }
 
-# ==========================================
-# ENTER YOUR DATA HERE
-# ==========================================
-locals {
-  # 1. Your OCID
-  compartment_id = "ocid1.tenancy.oc1..aaaaaaaapfkyfv3gvs3fugmdobuwcnkm2ifygv64rlmh4vappmaeswzt53mq"
-  
-  ad_name        = "Sbmw:EU-STOCKHOLM-1-AD-1"
-  
-  ssh_public_key_path = "~/.ssh/id_rsa.pub" 
+# 1. RESOURCE GROUP
+resource "azurerm_resource_group" "chat_rg" {
+  name     = "cloud-chat-rg-v2"
+  location = "Sweden Central" # Serwerownie w Holandii (blisko Polski, niski ping)
 }
 
-resource "oci_core_vcn" "chat_vcn" {
-  compartment_id = local.compartment_id
-  cidr_block     = "10.0.0.0/16"
-  display_name   = "Chat_VCN"
+# 2. NETWORK (VNet i Subnet)
+resource "azurerm_virtual_network" "chat_vnet" {
+  name                = "chat-vnet"
+  address_space       = ["10.0.0.0/16"]
+  location            = azurerm_resource_group.chat_rg.location
+  resource_group_name = azurerm_resource_group.chat_rg.name
 }
 
-resource "oci_core_internet_gateway" "chat_igw" {
-  compartment_id = local.compartment_id
-  vcn_id         = oci_core_vcn.chat_vcn.id
-  enabled        = true
-  display_name   = "Chat_Internet_Gateway"
+resource "azurerm_subnet" "chat_subnet" {
+  name                 = "chat-subnet"
+  resource_group_name  = azurerm_resource_group.chat_rg.name
+  virtual_network_name = azurerm_virtual_network.chat_vnet.name
+  address_prefixes     = ["10.0.1.0/24"]
 }
 
-resource "oci_core_default_route_table" "chat_route" {
-  manage_default_resource_id = oci_core_vcn.chat_vcn.default_route_table_id
-  route_rules {
-    network_entity_id = oci_core_internet_gateway.chat_igw.id
-    destination       = "0.0.0.0/0"
+# 3. PUBLIC IP ADDRESS AND NETWORK CARD
+resource "azurerm_public_ip" "chat_public_ip" {
+  name                = "chat-public-ip"
+  location            = azurerm_resource_group.chat_rg.location
+  resource_group_name = azurerm_resource_group.chat_rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_network_interface" "chat_nic" {
+  name                = "chat-nic"
+  location            = azurerm_resource_group.chat_rg.location
+  resource_group_name = azurerm_resource_group.chat_rg.name
+
+  ip_configuration {
+    name                          = "chat-nic-config"
+    subnet_id                     = azurerm_subnet.chat_subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.chat_public_ip.id
   }
 }
 
-resource "oci_core_default_security_list" "chat_security" {
-  manage_default_resource_id = oci_core_vcn.chat_vcn.default_security_list_id
+# 4. FIREWALL
+resource "azurerm_network_security_group" "chat_nsg" {
+  name                = "chat-nsg"
+  location            = azurerm_resource_group.chat_rg.location
+  resource_group_name = azurerm_resource_group.chat_rg.name
 
-  ingress_security_rules {
-    protocol    = "1" # ICMP (Ping)
-    source      = "0.0.0.0/0"
+  # SSH
+  security_rule {
+    name                       = "SSH"
+    priority                   = 1001
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
   }
 
-  ingress_security_rules {
-    protocol    = "6" # TCP
-    source      = "0.0.0.0/0"
-    tcp_options {
-      min = 22
-      max = 22
-    }
-  }
-
-  ingress_security_rules {
-    protocol    = "6" # TCP
-    source      = "0.0.0.0/0"
-    tcp_options {
-      min = 80
-      max = 3005
-    }
-  }
-
-  egress_security_rules {
-    protocol    = "all"
-    destination = "0.0.0.0/0"
-  }
-}
-
-resource "oci_core_subnet" "chat_subnet" {
-  compartment_id    = local.compartment_id
-  vcn_id            = oci_core_vcn.chat_vcn.id
-  cidr_block        = "10.0.0.0/24"
-  display_name      = "Chat_Subnet"
-}
-
-data "oci_core_images" "ubuntu_x86" {
-  compartment_id           = local.compartment_id
-  operating_system         = "Canonical Ubuntu"
-  operating_system_version = "22.04"
-  shape                    = "VM.Standard.E2.1.Micro" 
-  sort_by                  = "TIMECREATED"
-  sort_order               = "DESC"
-}
-
-resource "oci_core_instance" "chat_server" {
-  availability_domain = local.ad_name
-  compartment_id      = local.compartment_id
-  display_name        = "Chat_AMD_Server"
-  shape               = "VM.Standard.E2.1.Micro"
-
-  create_vnic_details {
-    subnet_id        = oci_core_subnet.chat_subnet.id
-    assign_public_ip = true
-  }
-
-  source_details {
-    source_type = "image"
-    source_id   = data.oci_core_images.ubuntu_x86.images[0].id
-  }
-
-  metadata = {
-    ssh_authorized_keys = file(local.ssh_public_key_path)
+  # 80 port and kubernetes ports
+  security_rule {
+    name                       = "HTTP_And_Chat"
+    priority                   = 1002
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_ranges    = ["80", "3000", "3001", "3002", "6443"]
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
   }
 }
 
+# Assigning Firewall to network card
+resource "azurerm_network_interface_security_group_association" "chat_nsg_assoc" {
+  network_interface_id      = azurerm_network_interface.chat_nic.id
+  network_security_group_id = azurerm_network_security_group.chat_nsg.id
+}
+
+# 5. SERWER (Ubuntu vm)
+resource "azurerm_linux_virtual_machine" "chat_server" {
+  name                = "chat-server-vm"
+  resource_group_name = azurerm_resource_group.chat_rg.name
+  location            = azurerm_resource_group.chat_rg.location
+  size                = "Standard_D2s_v3"
+  admin_username      = "ubuntu"
+
+  network_interface_ids = [
+    azurerm_network_interface.chat_nic.id,
+  ]
+
+  admin_ssh_key {
+    username   = "ubuntu"
+    public_key = file("~/.ssh/id_rsa.pub")
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "StandardSSD_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+}
+
+# FINAL OUTPUT
 output "SERVER_PUBLIC_IP" {
-  value       = oci_core_instance.chat_server.public_ip
-  description = "This is the address of your new server!"
+  value       = azurerm_public_ip.chat_public_ip.ip_address
+  description = "Adres IP Twojego nowego potężnego serwera w Azure!"
 }
